@@ -58,70 +58,28 @@ var OggOpusDecoder = function( config, Module ){
   this.HEAPF32 = Module.HEAPF32;
 
   this.outputBuffers = [];
+
+  this.init();
 };
 
 
 OggOpusDecoder.prototype.decode = function( typedArray ) {
-  var dataView = new DataView( typedArray.buffer );
-  this.getPageBoundaries( dataView ).map( function( pageStart ) {
-    var headerType = dataView.getUint8( pageStart + 5, true );
-    var pageIndex = dataView.getUint32( pageStart + 18, true );
-
-    // Beginning of stream
-    if ( headerType & 2 ) {
-      this.numberOfChannels = dataView.getUint8( pageStart + 37, true );
-      this.init();
-    }
-
-    // Decode page
-    if ( pageIndex > 1 ) {
-      var segmentTableLength = dataView.getUint8( pageStart + 26, true );
-      var segmentTableIndex = pageStart + 27 + segmentTableLength;
-
-      for ( var i = 0; i < segmentTableLength; i++ ) {
-        var packetLength = dataView.getUint8( pageStart + 27 + i, true );
-        this.decoderBuffer.set( typedArray.subarray( segmentTableIndex, segmentTableIndex += packetLength ), this.decoderBufferIndex );
-        this.decoderBufferIndex += packetLength;
-
-        if ( packetLength < 255 ) {
-          var outputSampleLength = this._opus_decode_float( this.decoder, this.decoderBufferPointer, this.decoderBufferIndex, this.decoderOutputPointer, this.decoderOutputMaxLength, 0);
-          var resampledLength = Math.ceil( outputSampleLength * this.config.outputBufferSampleRate / this.config.decoderSampleRate );
-          this.HEAP32[ this.decoderOutputLengthPointer >> 2 ] = outputSampleLength;
-          this.HEAP32[ this.resampleOutputLengthPointer >> 2 ] = resampledLength;
-          this._speex_resampler_process_interleaved_float( this.resampler, this.decoderOutputPointer, this.decoderOutputLengthPointer, this.resampleOutputBufferPointer, this.resampleOutputLengthPointer );
-          this.sendToOutputBuffers( this.HEAPF32.subarray( this.resampleOutputBufferPointer >> 2, (this.resampleOutputBufferPointer >> 2) + resampledLength * this.numberOfChannels ) );
-          this.decoderBufferIndex = 0;
-        }
-      }
-
-      // End of stream
-      if ( headerType & 4 ) {
-        this.sendLastBuffer();
-      }
-    }
-  }, this );
-};
-
-OggOpusDecoder.prototype.getPageBoundaries = function( dataView ){
-  var pageBoundaries = [];
-
-  for ( var i = 0; i < dataView.byteLength - 32; i++ ) {
-    if ( dataView.getUint32( i, true ) == 1399285583 ) {
-      pageBoundaries.push( i );
-    }
+  this.decoderBuffer.set(typedArray);
+  var outputSampleLength = this._opus_decode_float( this.decoder, this.decoderBufferPointer, typedArray.length, this.decoderOutputPointer, this.decoderOutputMaxLength, 0);
+  if(outputSampleLength < 0){
+    throw 'decode error:' + outputSampleLength;
   }
-
-  return pageBoundaries;
+  this.sendToOutputBuffers( this.HEAPF32.subarray( this.decoderOutputPointer >> 2, (this.decoderOutputPointer >> 2) + outputSampleLength * this.numberOfChannels ) );
 };
 
 OggOpusDecoder.prototype.init = function(){
+  this.numberOfChannels = this.config.numberOfChannels;
   this.resetOutputBuffers();
   this.initCodec();
-  this.initResampler();
+  //this.initResampler();
 };
 
 OggOpusDecoder.prototype.initCodec = function() {
-
   if ( this.decoder ) {
     this._opus_decoder_destroy( this.decoder );
     this._free( this.decoderBufferPointer );
